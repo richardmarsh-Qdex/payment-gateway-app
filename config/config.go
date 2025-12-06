@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"time"
@@ -54,9 +55,10 @@ type JWTConfig struct {
 }
 
 type SecurityConfig struct {
-	EncryptionKey string
-	RateLimitRPS  int
+	EncryptionKey  string
+	RateLimitRPS   int
 	RateLimitBurst int
+	PBKDF2Iterations int
 }
 
 type PaymentConfig struct {
@@ -67,7 +69,11 @@ type PaymentConfig struct {
 }
 
 func Load() (*Config, error) {
-	_ = godotenv.Load()
+	if err := godotenv.Load(); err != nil {
+		if cfg := os.Getenv("ENVIRONMENT"); cfg != "production" {
+			log.Println("Warning: .env file not found or could not be loaded")
+		}
+	}
 
 	config := &Config{
 		Server: ServerConfig{
@@ -87,8 +93,8 @@ func Load() (*Config, error) {
 			SSLMode:         getEnv("DB_SSLMODE", "disable"),
 			MaxOpenConns:    getIntEnv("DB_MAX_OPEN_CONNS", 25),
 			MaxIdleConns:    getIntEnv("DB_MAX_IDLE_CONNS", 5),
-			ConnMaxLifetime: getDurationEnv("DB_CONN_MAX_LIFETIME", 5*time.Minute),
-			ConnMaxIdleTime: getDurationEnv("DB_CONN_MAX_IDLE_TIME", 10*time.Minute),
+			ConnMaxLifetime: getDurationEnv("DB_CONN_MAX_LIFETIME", 15*time.Minute),
+			ConnMaxIdleTime: getDurationEnv("DB_CONN_MAX_IDLE_TIME", 5*time.Minute),
 		},
 		Redis: RedisConfig{
 			Host:     getEnv("REDIS_HOST", "localhost"),
@@ -102,9 +108,10 @@ func Load() (*Config, error) {
 			RefreshExpiry: getDurationEnv("JWT_REFRESH_EXPIRY", 7*24*time.Hour),
 		},
 		Security: SecurityConfig{
-			EncryptionKey:  getEnv("ENCRYPTION_KEY", "change-this-encryption-key-32-chars!"),
-			RateLimitRPS:   getIntEnv("RATE_LIMIT_RPS", 100),
-			RateLimitBurst: getIntEnv("RATE_LIMIT_BURST", 200),
+			EncryptionKey:   getEnv("ENCRYPTION_KEY", "change-this-encryption-key-32-chars!"),
+			RateLimitRPS:    getIntEnv("RATE_LIMIT_RPS", 100),
+			RateLimitBurst:  getIntEnv("RATE_LIMIT_BURST", 200),
+			PBKDF2Iterations: getIntEnv("PBKDF2_ITERATIONS", 600000),
 		},
 		Payment: PaymentConfig{
 			DefaultCurrency:    getEnv("DEFAULT_CURRENCY", "USD"),
@@ -116,6 +123,10 @@ func Load() (*Config, error) {
 
 	if config.JWT.SecretKey == "change-this-secret-key-in-production" && config.Server.Environment == "production" {
 		return nil, fmt.Errorf("JWT_SECRET_KEY must be changed in production")
+	}
+
+	if config.Security.EncryptionKey == "change-this-encryption-key-32-chars!" && config.Server.Environment == "production" {
+		return nil, fmt.Errorf("ENCRYPTION_KEY must be changed in production")
 	}
 
 	if len(config.Security.EncryptionKey) < 32 {
@@ -136,6 +147,8 @@ func getIntEnv(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
+		} else {
+			log.Printf("Warning: could not parse env var %s, using default value %d. Error: %v", key, defaultValue, err)
 		}
 	}
 	return defaultValue
@@ -145,6 +158,8 @@ func getFloatEnv(key string, defaultValue float64) float64 {
 	if value := os.Getenv(key); value != "" {
 		if floatValue, err := strconv.ParseFloat(value, 64); err == nil {
 			return floatValue
+		} else {
+			log.Printf("Warning: could not parse env var %s, using default value %f. Error: %v", key, defaultValue, err)
 		}
 	}
 	return defaultValue
@@ -154,6 +169,8 @@ func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 	if value := os.Getenv(key); value != "" {
 		if duration, err := time.ParseDuration(value); err == nil {
 			return duration
+		} else {
+			log.Printf("Warning: could not parse env var %s, using default value %v. Error: %v", key, defaultValue, err)
 		}
 	}
 	return defaultValue

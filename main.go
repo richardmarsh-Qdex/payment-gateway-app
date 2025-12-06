@@ -37,7 +37,7 @@ func main() {
 	middleware.InitAuth(cfg.JWT.SecretKey)
 	middleware.InitRateLimit(cfg)
 
-	paymentService := services.NewPaymentService(cfg.Security.EncryptionKey)
+	paymentService := services.NewPaymentService(cfg.Security.EncryptionKey, cfg.Security.PBKDF2Iterations)
 
 	paymentHandler := handlers.NewPaymentHandler(paymentService)
 	merchantHandler := handlers.NewMerchantHandler()

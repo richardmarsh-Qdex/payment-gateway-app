@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type Claims struct {
@@ -38,7 +41,12 @@ func AuthenticateAPIKey() gin.HandlerFunc {
 
 		var merchant models.Merchant
 		if err := database.DB.Where("api_key = ? AND is_active = ?", apiKey, true).First(&merchant).Error; err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+			} else {
+				log.Printf("Database error during API key auth: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "An internal error occurred"})
+			}
 			c.Abort()
 			return
 		}
@@ -110,6 +118,9 @@ func GetMerchantID(c *gin.Context) (uuid.UUID, bool) {
 	if !exists {
 		return uuid.Nil, false
 	}
-	return merchantID.(uuid.UUID), true
+	if id, ok := merchantID.(uuid.UUID); ok {
+		return id, true
+	}
+	return uuid.Nil, false
 }
 

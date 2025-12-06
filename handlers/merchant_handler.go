@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type MerchantHandler struct{}
@@ -30,7 +33,6 @@ type MerchantResponse struct {
 	Name      string    `json:"name"`
 	Email     string    `json:"email"`
 	APIKey    string    `json:"api_key"`
-	SecretKey string    `json:"secret_key"`
 	IsActive  bool      `json:"is_active"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -44,13 +46,26 @@ func (h *MerchantHandler) CreateMerchant(c *gin.Context) {
 	}
 
 	var existingMerchant models.Merchant
-	if err := database.DB.Where("email = ?", req.Email).First(&existingMerchant).Error; err == nil {
+	err := database.DB.Where("email = ?", req.Email).First(&existingMerchant).Error
+	if err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
+		return
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
-	apiKey := generateAPIKey()
-	secretKey := generateSecretKey()
+	apiKey, err := generateAPIKey()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate API key"})
+		return
+	}
+
+	secretKey, err := generateSecretKey()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate secret key"})
+		return
+	}
 
 	merchant := models.Merchant{
 		ID:        uuid.New(),
@@ -71,7 +86,6 @@ func (h *MerchantHandler) CreateMerchant(c *gin.Context) {
 		Name:      merchant.Name,
 		Email:     merchant.Email,
 		APIKey:    merchant.APIKey,
-		SecretKey: merchant.SecretKey,
 		IsActive:  merchant.IsActive,
 		CreatedAt: merchant.CreatedAt,
 	})
@@ -113,7 +127,16 @@ func (h *MerchantHandler) GenerateToken(c *gin.Context) {
 	}
 
 	var merchant models.Merchant
-	if err := database.DB.Where("api_key = ? AND secret_key = ? AND is_active = ?", req.APIKey, req.SecretKey, true).First(&merchant).Error; err != nil {
+	if err := database.DB.Where("api_key = ? AND is_active = ?", req.APIKey, true).First(&merchant).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "An internal error occurred"})
+		}
+		return
+	}
+
+	if !constantTimeCompare(merchant.SecretKey, req.SecretKey) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
@@ -130,15 +153,23 @@ func (h *MerchantHandler) GenerateToken(c *gin.Context) {
 	})
 }
 
-func generateAPIKey() string {
+func generateAPIKey() (string, error) {
 	bytes := make([]byte, 32)
-	rand.Read(bytes)
-	return "pk_" + base64.URLEncoding.EncodeToString(bytes)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return "pk_" + base64.URLEncoding.EncodeToString(bytes), nil
 }
 
-func generateSecretKey() string {
+func generateSecretKey() (string, error) {
 	bytes := make([]byte, 32)
-	rand.Read(bytes)
-	return "sk_" + base64.URLEncoding.EncodeToString(bytes)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return "sk_" + base64.URLEncoding.EncodeToString(bytes), nil
+}
+
+func constantTimeCompare(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 
 	"payment-gateway-go/database"
@@ -17,10 +18,10 @@ func NewHealthHandler() *HealthHandler {
 // HealthCheck checks the health of the service
 func (h *HealthHandler) HealthCheck(c *gin.Context) {
 	if err := database.HealthCheck(); err != nil {
+		log.Printf("Health check failed: %v", err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"status":  "unhealthy",
+			"status":   "unhealthy",
 			"database": "disconnected",
-			"error":   err.Error(),
 		})
 		return
 	}
@@ -34,9 +35,9 @@ func (h *HealthHandler) HealthCheck(c *gin.Context) {
 // ReadinessCheck checks if the service is ready to accept traffic
 func (h *HealthHandler) ReadinessCheck(c *gin.Context) {
 	if err := database.HealthCheck(); err != nil {
+		log.Printf("Readiness check failed: %v", err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"ready": false,
-			"error": err.Error(),
 		})
 		return
 	}

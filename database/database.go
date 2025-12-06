@@ -81,6 +81,9 @@ func Migrate() error {
 
 // Close closes the database connection
 func Close() error {
+	if DB == nil {
+		return nil
+	}
 	sqlDB, err := DB.DB()
 	if err != nil {
 		return err
@@ -90,6 +93,9 @@ func Close() error {
 
 // HealthCheck checks database health
 func HealthCheck() error {
+	if DB == nil {
+		return fmt.Errorf("database not initialized")
+	}
 	sqlDB, err := DB.DB()
 	if err != nil {
 		return err

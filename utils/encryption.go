@@ -13,19 +13,26 @@ import (
 )
 
 const (
-	saltSize = 16
+	saltSize  = 16
 	nonceSize = 12
-	keySize = 32
+	keySize   = 32
 )
+
+var defaultIterations = 600000
 
 // Encrypt encrypts sensitive data using AES-GCM
 func Encrypt(plaintext string, key string) (string, error) {
+	return EncryptWithIterations(plaintext, key, defaultIterations)
+}
+
+// EncryptWithIterations encrypts sensitive data using AES-GCM with custom iterations
+func EncryptWithIterations(plaintext string, key string, iterations int) (string, error) {
 	salt := make([]byte, saltSize)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 		return "", fmt.Errorf("failed to generate salt: %w", err)
 	}
 
-	derivedKey := pbkdf2.Key([]byte(key), salt, 4096, keySize, sha256.New)
+	derivedKey := pbkdf2.Key([]byte(key), salt, iterations, keySize, sha256.New)
 
 	block, err := aes.NewCipher(derivedKey)
 	if err != nil {
@@ -54,6 +61,11 @@ func Encrypt(plaintext string, key string) (string, error) {
 
 // Decrypt decrypts encrypted data
 func Decrypt(encrypted string, key string) (string, error) {
+	return DecryptWithIterations(encrypted, key, defaultIterations)
+}
+
+// DecryptWithIterations decrypts encrypted data with custom iterations
+func DecryptWithIterations(encrypted string, key string, iterations int) (string, error) {
 	data, err := base64.StdEncoding.DecodeString(encrypted)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode base64: %w", err)
@@ -67,7 +79,7 @@ func Decrypt(encrypted string, key string) (string, error) {
 	nonce := data[saltSize : saltSize+nonceSize]
 	ciphertext := data[saltSize+nonceSize:]
 
-	derivedKey := pbkdf2.Key([]byte(key), salt, 4096, keySize, sha256.New)
+	derivedKey := pbkdf2.Key([]byte(key), salt, iterations, keySize, sha256.New)
 
 	block, err := aes.NewCipher(derivedKey)
 	if err != nil {

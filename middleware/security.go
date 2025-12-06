@@ -2,8 +2,11 @@ package middleware
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // SecurityHeaders adds security headers to responses
@@ -11,7 +14,6 @@ func SecurityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
-		c.Header("X-XSS-Protection", "1; mode=block")
 		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		c.Header("Content-Security-Policy", "default-src 'self'")
 		c.Next()
@@ -20,10 +22,23 @@ func SecurityHeaders() gin.HandlerFunc {
 
 // CORS handles Cross-Origin Resource Sharing
 func CORS() gin.HandlerFunc {
+	allowedOrigins := getCORSOrigins()
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 
-		c.Header("Access-Control-Allow-Origin", origin)
+		allowed := false
+		for _, allowedOrigin := range allowedOrigins {
+			if origin == allowedOrigin {
+				allowed = true
+				c.Header("Access-Control-Allow-Origin", origin)
+				break
+			}
+		}
+
+		if !allowed && len(allowedOrigins) > 0 {
+			c.Header("Access-Control-Allow-Origin", allowedOrigins[0])
+		}
+
 		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
@@ -36,6 +51,20 @@ func CORS() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func getCORSOrigins() []string {
+	origins := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if origins == "" {
+		return []string{}
+	}
+	result := []string{}
+	for _, origin := range strings.Split(origins, ",") {
+		if trimmed := strings.TrimSpace(origin); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 // RequestID adds a unique request ID to each request
@@ -52,6 +81,6 @@ func RequestID() gin.HandlerFunc {
 }
 
 func generateRequestID() string {
-	return generateUUID()
+	return uuid.New().String()
 }
 
