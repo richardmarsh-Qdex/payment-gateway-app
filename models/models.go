@@ -34,8 +34,8 @@ type Merchant struct {
 	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	Name        string    `gorm:"not null" json:"name"`
 	Email       string    `gorm:"uniqueIndex;not null" json:"email"`
-	APIKey      string    `gorm:"uniqueIndex;not null" json:"-"` // Hidden from JSON
-	SecretKey   string    `gorm:"not null" json:"-"`              // Hidden from JSON
+	APIKey      string    `gorm:"uniqueIndex;not null" json:"-"`
+	SecretKey   string    `gorm:"not null" json:"-"`
 	IsActive    bool      `gorm:"default:true" json:"is_active"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -54,9 +54,9 @@ type Payment struct {
 	Description     string        `gorm:"type:text" json:"description"`
 	CustomerEmail   string        `gorm:"index" json:"customer_email"`
 	CustomerName    string        `json:"customer_name"`
-	ReferenceID     string        `gorm:"uniqueIndex" json:"reference_id"` // External reference
-	TransactionID   string        `gorm:"uniqueIndex" json:"transaction_id"` // Internal transaction ID
-	Metadata        string        `gorm:"type:jsonb" json:"metadata"` // Additional metadata
+	ReferenceID     string        `gorm:"uniqueIndex" json:"reference_id"`
+	TransactionID   string        `gorm:"uniqueIndex" json:"transaction_id"`
+	Metadata        string        `gorm:"type:jsonb" json:"metadata"`
 	FailureReason   string        `gorm:"type:text" json:"failure_reason,omitempty"`
 	ProcessedAt     *time.Time    `json:"processed_at,omitempty"`
 	CreatedAt       time.Time     `gorm:"index" json:"created_at"`
@@ -68,12 +68,12 @@ type PaymentCard struct {
 	ID              uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 	PaymentID       uuid.UUID `gorm:"type:uuid;not null;uniqueIndex" json:"payment_id"`
 	Payment         Payment   `gorm:"foreignKey:PaymentID" json:"-"`
-	CardNumberHash  string    `gorm:"not null;index" json:"-"` // Hashed card number for verification
+	CardNumberHash  string    `gorm:"not null;index" json:"-"`
 	Last4           string    `gorm:"not null;size:4" json:"last4"`
 	ExpiryMonth     int       `gorm:"not null" json:"expiry_month"`
 	ExpiryYear      int       `gorm:"not null" json:"expiry_year"`
 	CardholderName  string    `gorm:"not null" json:"cardholder_name"`
-	EncryptedCVV    string    `gorm:"not null" json:"-"` // Encrypted CVV
+	EncryptedCVV    string    `gorm:"not null" json:"-"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

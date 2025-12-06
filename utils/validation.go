@@ -8,21 +8,17 @@ import (
 
 // ValidateCardNumber validates credit card number using Luhn algorithm
 func ValidateCardNumber(cardNumber string) bool {
-	// Remove spaces and dashes
 	cardNumber = strings.ReplaceAll(cardNumber, " ", "")
 	cardNumber = strings.ReplaceAll(cardNumber, "-", "")
 
-	// Check if it's all digits
 	if matched, _ := regexp.MatchString(`^\d+$`, cardNumber); !matched {
 		return false
 	}
 
-	// Check length (typically 13-19 digits)
 	if len(cardNumber) < 13 || len(cardNumber) > 19 {
 		return false
 	}
 
-	// Luhn algorithm
 	sum := 0
 	isEven := false
 

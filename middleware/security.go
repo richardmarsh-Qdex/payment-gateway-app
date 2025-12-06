@@ -22,8 +22,7 @@ func SecurityHeaders() gin.HandlerFunc {
 func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
-		
-		// In production, validate against allowed origins
+
 		c.Header("Access-Control-Allow-Origin", origin)
 		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -53,7 +52,6 @@ func RequestID() gin.HandlerFunc {
 }
 
 func generateRequestID() string {
-	// Simple UUID-based request ID
 	return generateUUID()
 }
 

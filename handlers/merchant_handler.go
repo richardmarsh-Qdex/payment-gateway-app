@@ -43,14 +43,12 @@ func (h *MerchantHandler) CreateMerchant(c *gin.Context) {
 		return
 	}
 
-	// Check if email already exists
 	var existingMerchant models.Merchant
 	if err := database.DB.Where("email = ?", req.Email).First(&existingMerchant).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
 		return
 	}
 
-	// Generate API keys
 	apiKey := generateAPIKey()
 	secretKey := generateSecretKey()
 
@@ -126,9 +124,9 @@ func (h *MerchantHandler) GenerateToken(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+		c.JSON(http.StatusOK, gin.H{
 		"token":      token,
-		"expires_in": 900, // 15 minutes in seconds
+		"expires_in": 900,
 	})
 }
 

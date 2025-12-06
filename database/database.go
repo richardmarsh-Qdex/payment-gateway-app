@@ -44,7 +44,6 @@ func Init(cfg *config.Config) error {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Configure connection pool
 	sqlDB, err := db.DB()
 	if err != nil {
 		return fmt.Errorf("failed to get database instance: %w", err)
@@ -55,14 +54,12 @@ func Init(cfg *config.Config) error {
 	sqlDB.SetConnMaxLifetime(cfg.Database.ConnMaxLifetime)
 	sqlDB.SetConnMaxIdleTime(cfg.Database.ConnMaxIdleTime)
 
-	// Test connection
 	if err := sqlDB.Ping(); err != nil {
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	DB = db
 
-	// Run migrations
 	if err := Migrate(); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}

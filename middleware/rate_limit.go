@@ -33,7 +33,6 @@ func InitRateLimit(cfg *config.Config) {
 		burst:    cfg.Security.RateLimitBurst,
 	}
 
-	// Clean up old entries every 5 minutes
 	go func() {
 		for {
 			time.Sleep(5 * time.Minute)

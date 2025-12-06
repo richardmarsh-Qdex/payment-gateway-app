@@ -16,7 +16,6 @@ func NewHealthHandler() *HealthHandler {
 
 // HealthCheck checks the health of the service
 func (h *HealthHandler) HealthCheck(c *gin.Context) {
-	// Check database connection
 	if err := database.HealthCheck(); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"status":  "unhealthy",

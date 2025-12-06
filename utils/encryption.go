@@ -20,7 +20,6 @@ const (
 
 // Encrypt encrypts sensitive data using AES-GCM
 func Encrypt(plaintext string, key string) (string, error) {
-	// Derive key from password using PBKDF2
 	salt := make([]byte, saltSize)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 		return "", fmt.Errorf("failed to generate salt: %w", err)
@@ -28,28 +27,23 @@ func Encrypt(plaintext string, key string) (string, error) {
 
 	derivedKey := pbkdf2.Key([]byte(key), salt, 4096, keySize, sha256.New)
 
-	// Create cipher
 	block, err := aes.NewCipher(derivedKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to create cipher: %w", err)
 	}
 
-	// Create GCM
 	aesGCM, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	// Generate nonce
 	nonce := make([]byte, nonceSize)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	// Encrypt
 	ciphertext := aesGCM.Seal(nil, nonce, []byte(plaintext), nil)
 
-	// Combine salt + nonce + ciphertext
 	result := make([]byte, saltSize+nonceSize+len(ciphertext))
 	copy(result[:saltSize], salt)
 	copy(result[saltSize:saltSize+nonceSize], nonce)
@@ -60,7 +54,6 @@ func Encrypt(plaintext string, key string) (string, error) {
 
 // Decrypt decrypts encrypted data
 func Decrypt(encrypted string, key string) (string, error) {
-	// Decode base64
 	data, err := base64.StdEncoding.DecodeString(encrypted)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode base64: %w", err)
@@ -70,27 +63,22 @@ func Decrypt(encrypted string, key string) (string, error) {
 		return "", fmt.Errorf("encrypted data too short")
 	}
 
-	// Extract salt, nonce, and ciphertext
 	salt := data[:saltSize]
 	nonce := data[saltSize : saltSize+nonceSize]
 	ciphertext := data[saltSize+nonceSize:]
 
-	// Derive key
 	derivedKey := pbkdf2.Key([]byte(key), salt, 4096, keySize, sha256.New)
 
-	// Create cipher
 	block, err := aes.NewCipher(derivedKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to create cipher: %w", err)
 	}
 
-	// Create GCM
 	aesGCM, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	// Decrypt
 	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt: %w", err)

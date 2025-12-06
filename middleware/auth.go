@@ -7,7 +7,6 @@ import (
 
 	"payment-gateway-go/database"
 	"payment-gateway-go/models"
-	"payment-gateway-go/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"

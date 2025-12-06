@@ -67,7 +67,6 @@ type PaymentConfig struct {
 }
 
 func Load() (*Config, error) {
-	// Load .env file if it exists
 	_ = godotenv.Load()
 
 	config := &Config{
@@ -115,7 +114,6 @@ func Load() (*Config, error) {
 		},
 	}
 
-	// Validate critical config
 	if config.JWT.SecretKey == "change-this-secret-key-in-production" && config.Server.Environment == "production" {
 		return nil, fmt.Errorf("JWT_SECRET_KEY must be changed in production")
 	}

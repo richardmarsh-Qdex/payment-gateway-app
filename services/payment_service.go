@@ -23,19 +23,19 @@ func NewPaymentService(encryptionKey string) *PaymentService {
 }
 
 type CreatePaymentRequest struct {
-	Amount        float64              `json:"amount" binding:"required,gt=0"`
-	Currency      string               `json:"currency" binding:"required,len=3"`
-	PaymentMethod models.PaymentMethod `json:"payment_method" binding:"required"`
-	Description   string               `json:"description"`
-	CustomerEmail string               `json:"customer_email" binding:"required,email"`
-	CustomerName  string               `json:"customer_name"`
-	ReferenceID   string               `json:"reference_id"`
-	CardNumber    string               `json:"card_number"`
-	ExpiryMonth   int                  `json:"expiry_month"`
-	ExpiryYear    int                  `json:"expiry_year"`
-	CVV           string               `json:"cvv"`
-	CardholderName string              `json:"cardholder_name"`
-	Metadata      map[string]interface{} `json:"metadata"`
+	Amount         float64                `json:"amount" binding:"required,gt=0"`
+	Currency       string                 `json:"currency" binding:"required,len=3"`
+	PaymentMethod  models.PaymentMethod   `json:"payment_method" binding:"required"`
+	Description    string                 `json:"description"`
+	CustomerEmail  string                 `json:"customer_email" binding:"required,email"`
+	CustomerName   string                 `json:"customer_name"`
+	ReferenceID    string                 `json:"reference_id"`
+	CardNumber     string                 `json:"card_number"`
+	ExpiryMonth    int                    `json:"expiry_month"`
+	ExpiryYear     int                    `json:"expiry_year"`
+	CVV            string                 `json:"cvv"`
+	CardholderName string                 `json:"cardholder_name"`
+	Metadata       map[string]interface{} `json:"metadata"`
 }
 
 type PaymentResponse struct {
@@ -51,7 +51,6 @@ type PaymentResponse struct {
 
 // CreatePayment creates a new payment
 func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRequest) (*PaymentResponse, error) {
-	// Validate card details if payment method is card
 	if req.PaymentMethod == models.PaymentMethodCard {
 		if !utils.ValidateCardNumber(req.CardNumber) {
 			return nil, fmt.Errorf("invalid card number")
@@ -67,7 +66,6 @@ func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRe
 		}
 	}
 
-	// Start transaction
 	tx := database.DB.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -75,7 +73,6 @@ func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRe
 		}
 	}()
 
-	// Create payment
 	payment := models.Payment{
 		ID:            uuid.New(),
 		MerchantID:    merchantID,
@@ -95,7 +92,6 @@ func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRe
 		return nil, fmt.Errorf("failed to create payment: %w", err)
 	}
 
-	// Store card details if payment method is card
 	if req.PaymentMethod == models.PaymentMethodCard {
 		encryptedCVV, err := utils.Encrypt(req.CVV, s.encryptionKey)
 		if err != nil {
@@ -123,7 +119,6 @@ func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRe
 		}
 	}
 
-	// Process payment asynchronously
 	go s.processPayment(payment.ID)
 
 	if err := tx.Commit().Error; err != nil {
@@ -144,25 +139,22 @@ func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRe
 
 // processPayment processes a payment (simulated)
 func (s *PaymentService) processPayment(paymentID uuid.UUID) {
-	// Update status to processing
 	database.DB.Model(&models.Payment{}).
 		Where("id = ?", paymentID).
 		Update("status", models.PaymentStatusProcessing)
 
-	// Simulate payment processing delay
 	time.Sleep(2 * time.Second)
 
-	// Simulate payment success (90% success rate)
 	now := time.Now()
 	var status models.PaymentStatus
-	if time.Now().Unix()%10 != 0 { // 90% success rate
+	if time.Now().Unix()%10 != 0 {
 		status = models.PaymentStatusCompleted
 	} else {
 		status = models.PaymentStatusFailed
 	}
 
 	updateData := map[string]interface{}{
-		"status":      status,
+		"status":       status,
 		"processed_at": &now,
 	}
 
@@ -174,7 +166,6 @@ func (s *PaymentService) processPayment(paymentID uuid.UUID) {
 		Where("id = ?", paymentID).
 		Updates(updateData)
 
-	// Trigger webhook
 	go s.triggerWebhook(paymentID)
 }
 
@@ -196,7 +187,7 @@ func (s *PaymentService) ListPayments(merchantID uuid.UUID, limit, offset int) (
 	var total int64
 
 	query := database.DB.Model(&models.Payment{}).Where("merchant_id = ?", merchantID)
-	
+
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count payments: %w", err)
 	}
@@ -210,7 +201,6 @@ func (s *PaymentService) ListPayments(merchantID uuid.UUID, limit, offset int) (
 
 // RefundPayment processes a refund
 func (s *PaymentService) RefundPayment(paymentID uuid.UUID, merchantID uuid.UUID, amount float64, reason string) (*models.Refund, error) {
-	// Get payment
 	var payment models.Payment
 	if err := database.DB.Where("id = ? AND merchant_id = ?", paymentID, merchantID).First(&payment).Error; err != nil {
 		return nil, fmt.Errorf("payment not found")
@@ -224,22 +214,20 @@ func (s *PaymentService) RefundPayment(paymentID uuid.UUID, merchantID uuid.UUID
 		return nil, fmt.Errorf("refund amount cannot exceed payment amount")
 	}
 
-	// Create refund
 	refund := models.Refund{
-		ID:          uuid.New(),
-		PaymentID:   paymentID,
-		Amount:      amount,
-		Currency:    payment.Currency,
-		Reason:      reason,
-		Status:      "pending",
-		RefundID:    generateTransactionID(),
+		ID:        uuid.New(),
+		PaymentID: paymentID,
+		Amount:    amount,
+		Currency:  payment.Currency,
+		Reason:    reason,
+		Status:    "pending",
+		RefundID:  generateTransactionID(),
 	}
 
 	if err := database.DB.Create(&refund).Error; err != nil {
 		return nil, fmt.Errorf("failed to create refund: %w", err)
 	}
 
-	// Process refund
 	go s.processRefund(refund.ID, paymentID)
 
 	return &refund, nil
@@ -262,11 +250,8 @@ func (s *PaymentService) processRefund(refundID uuid.UUID, paymentID uuid.UUID) 
 }
 
 func (s *PaymentService) triggerWebhook(paymentID uuid.UUID) {
-	// Webhook implementation would go here
-	// This is a placeholder
 }
 
 func generateTransactionID() string {
 	return fmt.Sprintf("TXN-%d-%s", time.Now().Unix(), uuid.New().String()[:8])
 }
-
