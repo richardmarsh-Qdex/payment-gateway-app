@@ -1,83 +1,69 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
-	"sync"
 	"time"
 
 	"payment-gateway-go/config"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/time/rate"
+	"github.com/redis/go-redis/v9"
 )
 
-type rateLimiter struct {
-	limiter  *rate.Limiter
-	lastSeen time.Time
-}
-
 type RateLimitStore struct {
-	visitors map[string]*rateLimiter
-	mu       sync.RWMutex
-	rps      int
-	burst    int
+	client *redis.Client
+	rps    int
+	burst  int
+	ctx    context.Context
 }
 
-var store *RateLimitStore
+// InitRateLimit initializes Redis-based rate limiting
+func InitRateLimit(cfg *config.Config) *RateLimitStore {
+	client := redis.NewClient(&redis.Options{
+		Addr:     cfg.Redis.Host + ":" + cfg.Redis.Port,
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
 
-// InitRateLimit initializes rate limiting
-func InitRateLimit(cfg *config.Config) {
-	store = &RateLimitStore{
-		visitors: make(map[string]*rateLimiter),
-		rps:      cfg.Security.RateLimitRPS,
-		burst:    cfg.Security.RateLimitBurst,
+	store := &RateLimitStore{
+		client: client,
+		rps:    cfg.Security.RateLimitRPS,
+		burst:  cfg.Security.RateLimitBurst,
+		ctx:    context.Background(),
 	}
 
-	go func() {
-		for {
-			time.Sleep(5 * time.Minute)
-			store.cleanup()
-		}
-	}()
-}
-
-func (rs *RateLimitStore) getVisitor(ip string) *rateLimiter {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-
-	visitor, exists := rs.visitors[ip]
-	if !exists {
-		limiter := rate.NewLimiter(rate.Limit(rs.rps), rs.burst)
-		visitor = &rateLimiter{
-			limiter:  limiter,
-			lastSeen: time.Now(),
-		}
-		rs.visitors[ip] = visitor
-	} else {
-		visitor.lastSeen = time.Now()
+	// Test Redis connection
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		// Log error but don't fail - rate limiting will be disabled
+		// In production, you might want to fail fast
 	}
 
-	return visitor
+	return store
 }
 
-func (rs *RateLimitStore) cleanup() {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-
-	for ip, visitor := range rs.visitors {
-		if time.Since(visitor.lastSeen) > 10*time.Minute {
-			delete(rs.visitors, ip)
-		}
-	}
-}
-
-// RateLimit middleware limits requests per IP
-func RateLimit() gin.HandlerFunc {
+// Middleware returns a gin middleware function for rate limiting
+func (rs *RateLimitStore) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
-		visitor := store.getVisitor(ip)
+		key := "rate_limit:" + ip
 
-		if !visitor.limiter.Allow() {
+		// Use Redis sliding window log algorithm
+		now := time.Now().Unix()
+		windowStart := now - int64(rs.rps)
+
+		// Remove old entries outside the window
+		rs.client.ZRemRangeByScore(rs.ctx, key, "0", string(rune(windowStart)))
+
+		// Count current requests in window
+		count, err := rs.client.ZCard(rs.ctx, key).Result()
+		if err != nil {
+			// If Redis fails, allow the request (fail open)
+			c.Next()
+			return
+		}
+
+		if int(count) >= rs.burst {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "Rate limit exceeded",
 			})
@@ -85,7 +71,23 @@ func RateLimit() gin.HandlerFunc {
 			return
 		}
 
+		// Add current request to the set
+		rs.client.ZAdd(rs.ctx, key, redis.Z{
+			Score:  float64(now),
+			Member: now,
+		})
+
+		// Set expiration on the key
+		rs.client.Expire(rs.ctx, key, time.Duration(rs.rps)*time.Second)
+
 		c.Next()
 	}
 }
 
+// Close closes the Redis connection
+func (rs *RateLimitStore) Close() error {
+	if rs.client != nil {
+		return rs.client.Close()
+	}
+	return nil
+}

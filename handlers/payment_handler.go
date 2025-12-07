@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"payment-gateway-go/middleware"
+	"payment-gateway-go/models"
 	"payment-gateway-go/services"
 
 	"github.com/gin-gonic/gin"
@@ -80,7 +82,11 @@ func (h *PaymentHandler) GetPayment(c *gin.Context) {
 
 	payment, err := h.paymentService.GetPayment(paymentID, merchantID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		if errors.Is(err, services.ErrPaymentNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "An internal error occurred"})
+		}
 		return
 	}
 
@@ -94,7 +100,7 @@ func (h *PaymentHandler) GetPayment(c *gin.Context) {
 // @Produce json
 // @Param limit query int false "Limit" default(20)
 // @Param offset query int false "Offset" default(0)
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} ListPaymentsResponse
 // @Failure 401 {object} map[string]string
 // @Router /api/v1/payments [get]
 func (h *PaymentHandler) ListPayments(c *gin.Context) {
@@ -128,11 +134,18 @@ func (h *PaymentHandler) ListPayments(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"payments": payments,
-		"total":    total,
-		"limit":    limit,
-		"offset":   offset,
+	type ListPaymentsResponse struct {
+		Payments []models.Payment `json:"payments"`
+		Total    int64            `json:"total"`
+		Limit    int              `json:"limit"`
+		Offset   int              `json:"offset"`
+	}
+
+	c.JSON(http.StatusOK, ListPaymentsResponse{
+		Payments: payments,
+		Total:    total,
+		Limit:    limit,
+		Offset:   offset,
 	})
 }
 
@@ -161,10 +174,12 @@ func (h *PaymentHandler) RefundPayment(c *gin.Context) {
 		return
 	}
 
-	var req struct {
+	type RefundPaymentRequest struct {
 		Amount float64 `json:"amount" binding:"required,gt=0"`
 		Reason string  `json:"reason"`
 	}
+
+	var req RefundPaymentRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

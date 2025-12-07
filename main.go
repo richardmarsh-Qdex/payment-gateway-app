@@ -17,6 +17,7 @@ import (
 	"payment-gateway-go/services"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -29,21 +30,22 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	if err := database.Init(cfg); err != nil {
+	db, err := database.Init(cfg)
+	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer database.Close()
+	defer database.Close(db)
 
 	middleware.InitAuth(cfg.JWT.SecretKey)
-	middleware.InitRateLimit(cfg)
+	rateLimiter := middleware.InitRateLimit(cfg)
 
-	paymentService := services.NewPaymentService(cfg.Security.EncryptionKey, cfg.Security.PBKDF2Iterations)
+	paymentService := services.NewPaymentService(db, cfg.Security.EncryptionKey, cfg.Security.PBKDF2Iterations, cfg.Payment)
 
 	paymentHandler := handlers.NewPaymentHandler(paymentService)
-	merchantHandler := handlers.NewMerchantHandler()
-	healthHandler := handlers.NewHealthHandler()
+	merchantHandler := handlers.NewMerchantHandler(db)
+	healthHandler := handlers.NewHealthHandler(db)
 
-	router := setupRouter(paymentHandler, merchantHandler, healthHandler, cfg)
+	router := setupRouter(paymentHandler, merchantHandler, healthHandler, cfg, db, rateLimiter)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
@@ -72,6 +74,13 @@ func main() {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
+	// Close rate limiter Redis connection
+	if rateLimiter != nil {
+		if err := rateLimiter.Close(); err != nil {
+			log.Printf("Error closing rate limiter: %v", err)
+		}
+	}
+
 	log.Println("Server exited")
 }
 
@@ -80,6 +89,8 @@ func setupRouter(
 	merchantHandler *handlers.MerchantHandler,
 	healthHandler *handlers.HealthHandler,
 	cfg *config.Config,
+	db *gorm.DB,
+	rateLimiter *middleware.RateLimitStore,
 ) *gin.Engine {
 	router := gin.New()
 
@@ -98,8 +109,8 @@ func setupRouter(
 		v1.POST("/merchants/token", merchantHandler.GenerateToken)
 
 		protected := v1.Group("")
-		protected.Use(middleware.RateLimit())
-		protected.Use(middleware.AuthenticateAPIKey())
+		protected.Use(rateLimiter.Middleware())
+		protected.Use(middleware.Authenticate(db))
 		{
 			protected.GET("/merchants/profile", merchantHandler.GetMerchantProfile)
 

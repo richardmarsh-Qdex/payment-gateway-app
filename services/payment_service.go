@@ -2,27 +2,40 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"time"
 
-	"payment-gateway-go/database"
+	"payment-gateway-go/config"
 	"payment-gateway-go/models"
 	"payment-gateway-go/utils"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+var (
+	ErrPaymentNotFound = errors.New("payment not found")
+	ErrInvalidCurrency = errors.New("unsupported currency")
+	ErrInvalidAmount   = errors.New("amount exceeds limits")
 )
 
 type PaymentService struct {
+	db               *gorm.DB
 	encryptionKey    string
 	pbkdf2Iterations int
+	paymentConfig    config.PaymentConfig
 }
 
-func NewPaymentService(encryptionKey string, pbkdf2Iterations int) *PaymentService {
+func NewPaymentService(db *gorm.DB, encryptionKey string, pbkdf2Iterations int, paymentConfig config.PaymentConfig) *PaymentService {
 	return &PaymentService{
+		db:               db,
 		encryptionKey:    encryptionKey,
 		pbkdf2Iterations: pbkdf2Iterations,
+		paymentConfig:    paymentConfig,
 	}
 }
 
@@ -55,6 +68,16 @@ type PaymentResponse struct {
 
 // CreatePayment creates a new payment
 func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRequest) (*PaymentResponse, error) {
+	// Validate currency
+	if !s.isCurrencySupported(req.Currency) {
+		return nil, ErrInvalidCurrency
+	}
+
+	// Validate amount
+	if req.Amount < s.paymentConfig.MinAmount || req.Amount > s.paymentConfig.MaxAmount {
+		return nil, fmt.Errorf("%w: amount must be between %.2f and %.2f", ErrInvalidAmount, s.paymentConfig.MinAmount, s.paymentConfig.MaxAmount)
+	}
+
 	if req.PaymentMethod == models.PaymentMethodCard {
 		if !utils.ValidateCardNumber(req.CardNumber) {
 			return nil, fmt.Errorf("invalid card number")
@@ -71,12 +94,10 @@ func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRe
 		}
 	}
 
-	tx := database.DB.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
+	tx := s.db.Begin()
+	if tx.Error != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
 
 	var metadataJSON string
 	if req.Metadata != nil {
@@ -144,7 +165,14 @@ func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRe
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	go s.processPayment(payment.ID)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("CRITICAL: Panic recovered in processPayment goroutine: %v\n%s", r, debug.Stack())
+			}
+		}()
+		s.processPayment(payment.ID)
+	}()
 
 	return &PaymentResponse{
 		ID:            payment.ID,
@@ -158,9 +186,19 @@ func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRe
 	}, nil
 }
 
+// isCurrencySupported checks if currency is in the supported list
+func (s *PaymentService) isCurrencySupported(currency string) bool {
+	for _, supported := range s.paymentConfig.SupportedCurrencies {
+		if supported == currency {
+			return true
+		}
+	}
+	return false
+}
+
 // processPayment processes a payment (simulated)
 func (s *PaymentService) processPayment(paymentID uuid.UUID) {
-	if err := database.DB.Model(&models.Payment{}).
+	if err := s.db.Model(&models.Payment{}).
 		Where("id = ?", paymentID).
 		Update("status", models.PaymentStatusProcessing).Error; err != nil {
 		log.Printf("ERROR: failed to update payment %s to processing: %v", paymentID, err)
@@ -186,22 +224,29 @@ func (s *PaymentService) processPayment(paymentID uuid.UUID) {
 		updateData["failure_reason"] = "Payment processing failed"
 	}
 
-	if err := database.DB.Model(&models.Payment{}).
+	if err := s.db.Model(&models.Payment{}).
 		Where("id = ?", paymentID).
 		Updates(updateData).Error; err != nil {
 		log.Printf("ERROR: failed to update payment %s status: %v", paymentID, err)
 		return
 	}
 
-	go s.triggerWebhook(paymentID)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("CRITICAL: Panic recovered in triggerWebhook goroutine: %v\n%s", r, debug.Stack())
+			}
+		}()
+		s.triggerWebhook(paymentID)
+	}()
 }
 
 // GetPayment retrieves a payment by ID
 func (s *PaymentService) GetPayment(paymentID uuid.UUID, merchantID uuid.UUID) (*models.Payment, error) {
 	var payment models.Payment
-	if err := database.DB.Where("id = ? AND merchant_id = ?", paymentID, merchantID).First(&payment).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("payment not found")
+	if err := s.db.Where("id = ? AND merchant_id = ?", paymentID, merchantID).First(&payment).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPaymentNotFound
 		}
 		return nil, fmt.Errorf("failed to get payment: %w", err)
 	}
@@ -213,7 +258,7 @@ func (s *PaymentService) ListPayments(merchantID uuid.UUID, limit, offset int) (
 	var payments []models.Payment
 	var total int64
 
-	query := database.DB.Model(&models.Payment{}).Where("merchant_id = ?", merchantID)
+	query := s.db.Model(&models.Payment{}).Where("merchant_id = ?", merchantID)
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count payments: %w", err)
@@ -226,29 +271,42 @@ func (s *PaymentService) ListPayments(merchantID uuid.UUID, limit, offset int) (
 	return payments, total, nil
 }
 
-// RefundPayment processes a refund
+// RefundPayment processes a refund with transaction and row locking
 func (s *PaymentService) RefundPayment(paymentID uuid.UUID, merchantID uuid.UUID, amount float64, reason string) (*models.Refund, error) {
+	tx := s.db.Begin()
+	if tx.Error != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
+
+	// Lock the payment row for update to prevent race conditions
 	var payment models.Payment
-	if err := database.DB.Where("id = ? AND merchant_id = ?", paymentID, merchantID).First(&payment).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("payment not found")
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND merchant_id = ?", paymentID, merchantID).
+		First(&payment).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPaymentNotFound
 		}
 		return nil, fmt.Errorf("failed to retrieve payment: %w", err)
 	}
 
 	if payment.Status != models.PaymentStatusCompleted {
+		tx.Rollback()
 		return nil, fmt.Errorf("can only refund completed payments")
 	}
 
+	// Calculate total refunded within the transaction
 	var totalRefunded float64
-	if err := database.DB.Model(&models.Refund{}).
-		Where("payment_id = ? AND status = ?", paymentID, "completed").
+	if err := tx.Model(&models.Refund{}).
+		Where("payment_id = ? AND status = ?", paymentID, models.RefundStatusCompleted).
 		Select("COALESCE(SUM(amount), 0)").
 		Scan(&totalRefunded).Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("failed to calculate total refunded: %w", err)
 	}
 
 	if amount+totalRefunded > payment.Amount {
+		tx.Rollback()
 		return nil, fmt.Errorf("total refund amount cannot exceed payment amount")
 	}
 
@@ -258,15 +316,41 @@ func (s *PaymentService) RefundPayment(paymentID uuid.UUID, merchantID uuid.UUID
 		Amount:    amount,
 		Currency:  payment.Currency,
 		Reason:    reason,
-		Status:    "pending",
+		Status:    models.RefundStatusPending,
 		RefundID:  generateTransactionID(),
 	}
 
-	if err := database.DB.Create(&refund).Error; err != nil {
+	if err := tx.Create(&refund).Error; err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("failed to create refund: %w", err)
 	}
 
-	go s.processRefund(refund.ID, paymentID)
+	// Determine payment status based on refund amount
+	newStatus := models.PaymentStatusPartiallyRefunded
+	if totalRefunded+amount >= payment.Amount {
+		newStatus = models.PaymentStatusRefunded
+	}
+
+	// Update payment status within transaction
+	if err := tx.Model(&models.Payment{}).
+		Where("id = ?", paymentID).
+		Update("status", newStatus).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to update payment status: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("CRITICAL: Panic recovered in processRefund goroutine: %v\n%s", r, debug.Stack())
+			}
+		}()
+		s.processRefund(refund.ID, paymentID)
+	}()
 
 	return &refund, nil
 }
@@ -275,19 +359,47 @@ func (s *PaymentService) processRefund(refundID uuid.UUID, paymentID uuid.UUID) 
 	time.Sleep(1 * time.Second)
 
 	now := time.Now()
-	database.DB.Model(&models.Refund{}).
+	if err := s.db.Model(&models.Refund{}).
 		Where("id = ?", refundID).
 		Updates(map[string]interface{}{
-			"status":       "completed",
+			"status":       models.RefundStatusCompleted,
 			"processed_at": &now,
-		})
+		}).Error; err != nil {
+		log.Printf("ERROR: failed to update refund %s status: %v", refundID, err)
+		return
+	}
 
-	database.DB.Model(&models.Payment{}).
+	// Recalculate total refunded to determine payment status
+	var totalRefunded float64
+	var payment models.Payment
+	if err := s.db.Where("id = ?", paymentID).First(&payment).Error; err != nil {
+		log.Printf("ERROR: failed to retrieve payment %s: %v", paymentID, err)
+		return
+	}
+
+	if err := s.db.Model(&models.Refund{}).
+		Where("payment_id = ? AND status = ?", paymentID, models.RefundStatusCompleted).
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&totalRefunded).Error; err != nil {
+		log.Printf("ERROR: failed to calculate total refunded for payment %s: %v", paymentID, err)
+		return
+	}
+
+	newStatus := models.PaymentStatusPartiallyRefunded
+	if totalRefunded >= payment.Amount {
+		newStatus = models.PaymentStatusRefunded
+	}
+
+	if err := s.db.Model(&models.Payment{}).
 		Where("id = ?", paymentID).
-		Update("status", models.PaymentStatusRefunded)
+		Update("status", newStatus).Error; err != nil {
+		log.Printf("ERROR: failed to update payment %s status: %v", paymentID, err)
+		return
+	}
 }
 
 func (s *PaymentService) triggerWebhook(paymentID uuid.UUID) {
+	// Webhook implementation
 }
 
 func generateTransactionID() string {

@@ -2,25 +2,26 @@ package handlers
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"net/http"
 	"time"
 
-	"payment-gateway-go/database"
 	"payment-gateway-go/middleware"
 	"payment-gateway-go/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
-type MerchantHandler struct{}
+type MerchantHandler struct {
+	db *gorm.DB
+}
 
-func NewMerchantHandler() *MerchantHandler {
-	return &MerchantHandler{}
+func NewMerchantHandler(db *gorm.DB) *MerchantHandler {
+	return &MerchantHandler{db: db}
 }
 
 type CreateMerchantRequest struct {
@@ -46,7 +47,7 @@ func (h *MerchantHandler) CreateMerchant(c *gin.Context) {
 	}
 
 	var existingMerchant models.Merchant
-	err := database.DB.Where("email = ?", req.Email).First(&existingMerchant).Error
+	err := h.db.Where("email = ?", req.Email).First(&existingMerchant).Error
 	if err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
 		return
@@ -67,16 +68,22 @@ func (h *MerchantHandler) CreateMerchant(c *gin.Context) {
 		return
 	}
 
-	merchant := models.Merchant{
-		ID:        uuid.New(),
-		Name:      req.Name,
-		Email:     req.Email,
-		APIKey:    apiKey,
-		SecretKey: secretKey,
-		IsActive:  true,
+	// Hash the secret key before storing
+	secretKeyHash, err := bcrypt.GenerateFromPassword([]byte(secretKey), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash secret key"})
+		return
 	}
 
-	if err := database.DB.Create(&merchant).Error; err != nil {
+	merchant := models.Merchant{
+		Name:         req.Name,
+		Email:        req.Email,
+		APIKey:       apiKey,
+		SecretKeyHash: string(secretKeyHash),
+		IsActive:     true,
+	}
+
+	if err := h.db.Create(&merchant).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create merchant"})
 		return
 	}
@@ -100,17 +107,25 @@ func (h *MerchantHandler) GetMerchantProfile(c *gin.Context) {
 	}
 
 	var merchant models.Merchant
-	if err := database.DB.Where("id = ?", merchantID).First(&merchant).Error; err != nil {
+	if err := h.db.Where("id = ?", merchantID).First(&merchant).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Merchant not found"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"id":        merchant.ID,
-		"name":      merchant.Name,
-		"email":     merchant.Email,
-		"is_active": merchant.IsActive,
-		"created_at": merchant.CreatedAt,
+	type ProfileResponse struct {
+		ID        uuid.UUID `json:"id"`
+		Name      string    `json:"name"`
+		Email     string    `json:"email"`
+		IsActive  bool      `json:"is_active"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	c.JSON(http.StatusOK, ProfileResponse{
+		ID:        merchant.ID,
+		Name:      merchant.Name,
+		Email:     merchant.Email,
+		IsActive:  merchant.IsActive,
+		CreatedAt: merchant.CreatedAt,
 	})
 }
 
@@ -127,7 +142,7 @@ func (h *MerchantHandler) GenerateToken(c *gin.Context) {
 	}
 
 	var merchant models.Merchant
-	if err := database.DB.Where("api_key = ? AND is_active = ?", req.APIKey, true).First(&merchant).Error; err != nil {
+	if err := h.db.Where("api_key = ? AND is_active = ?", req.APIKey, true).First(&merchant).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		} else {
@@ -136,7 +151,8 @@ func (h *MerchantHandler) GenerateToken(c *gin.Context) {
 		return
 	}
 
-	if !constantTimeCompare(merchant.SecretKey, req.SecretKey) {
+	// Compare secret key using bcrypt
+	if err := bcrypt.CompareHashAndPassword([]byte(merchant.SecretKeyHash), []byte(req.SecretKey)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
@@ -147,7 +163,7 @@ func (h *MerchantHandler) GenerateToken(c *gin.Context) {
 		return
 	}
 
-		c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, gin.H{
 		"token":      token,
 		"expires_in": 900,
 	})
@@ -169,7 +185,4 @@ func generateSecretKey() (string, error) {
 	return "sk_" + base64.URLEncoding.EncodeToString(bytes), nil
 }
 
-func constantTimeCompare(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
 

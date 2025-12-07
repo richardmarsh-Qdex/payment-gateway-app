@@ -26,17 +26,12 @@ func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 
-		allowed := false
+		// Only set CORS headers if origin is in allowlist
 		for _, allowedOrigin := range allowedOrigins {
 			if origin == allowedOrigin {
-				allowed = true
 				c.Header("Access-Control-Allow-Origin", origin)
 				break
 			}
-		}
-
-		if !allowed && len(allowedOrigins) > 0 {
-			c.Header("Access-Control-Allow-Origin", allowedOrigins[0])
 		}
 
 		c.Header("Access-Control-Allow-Credentials", "true")

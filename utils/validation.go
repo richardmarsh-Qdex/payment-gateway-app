@@ -8,10 +8,9 @@ import (
 )
 
 var (
-	cvvRegex      = regexp.MustCompile(`^\d{3,4}$`)
-	emailRegex    = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
-	digitsRegex   = regexp.MustCompile(`^\d+$`)
-	expiryRegex   = regexp.MustCompile(`^(0[1-9]|1[0-2])\/(\d{2}|\d{4})$`)
+	cvvRegex    = regexp.MustCompile(`^\d{3,4}$`)
+	emailRegex  = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	digitsRegex = regexp.MustCompile(`^\d+$`)
 )
 
 // ValidateCardNumber validates credit card number using Luhn algorithm

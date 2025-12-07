@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"payment-gateway-go/database"
 	"payment-gateway-go/models"
 
 	"github.com/gin-gonic/gin"
@@ -29,31 +28,72 @@ func InitAuth(secret string) {
 	jwtSecret = []byte(secret)
 }
 
-// AuthenticateAPIKey authenticates requests using API key
+// Authenticate supports both API Key and JWT token authentication
+func Authenticate(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Try API Key first
+		apiKey := c.GetHeader("X-API-Key")
+		if apiKey != "" {
+			var merchant models.Merchant
+			if err := db.Where("api_key = ? AND is_active = ?", apiKey, true).First(&merchant).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+				} else {
+					log.Printf("Database error during API key auth: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "An internal error occurred"})
+				}
+				c.Abort()
+				return
+			}
+
+			c.Set("merchant_id", merchant.ID)
+			c.Set("merchant", merchant)
+			c.Next()
+			return
+		}
+
+		// Try JWT token
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "API key or authorization token required"})
+			c.Abort()
+			return
+		}
+
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
+			c.Abort()
+			return
+		}
+
+		tokenString := parts[1]
+		claims := &Claims{}
+
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrSignatureInvalid
+			}
+			return jwtSecret, nil
+		})
+
+		if err != nil || !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
+
+		c.Set("merchant_id", claims.MerchantID)
+		c.Set("email", claims.Email)
+		c.Next()
+	}
+}
+
+// AuthenticateAPIKey authenticates requests using API key (deprecated, use Authenticate instead)
 func AuthenticateAPIKey() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		apiKey := c.GetHeader("X-API-Key")
-		if apiKey == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "API key required"})
-			c.Abort()
-			return
-		}
-
-		var merchant models.Merchant
-		if err := database.DB.Where("api_key = ? AND is_active = ?", apiKey, true).First(&merchant).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
-			} else {
-				log.Printf("Database error during API key auth: %v", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "An internal error occurred"})
-			}
-			c.Abort()
-			return
-		}
-
-		c.Set("merchant_id", merchant.ID)
-		c.Set("merchant", merchant)
-		c.Next()
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "This endpoint requires authentication"})
+		c.Abort()
 	}
 }
 

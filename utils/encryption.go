@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -18,11 +19,15 @@ const (
 	keySize   = 32
 )
 
-var defaultIterations = 600000
+// GetDefaultIterations returns the default PBKDF2 iterations, configurable via env
+func GetDefaultIterations() int {
+	// This will be overridden by config, but provides a default
+	return 600000
+}
 
 // Encrypt encrypts sensitive data using AES-GCM
 func Encrypt(plaintext string, key string) (string, error) {
-	return EncryptWithIterations(plaintext, key, defaultIterations)
+	return EncryptWithIterations(plaintext, key, GetDefaultIterations())
 }
 
 // EncryptWithIterations encrypts sensitive data using AES-GCM with custom iterations
@@ -61,7 +66,7 @@ func EncryptWithIterations(plaintext string, key string, iterations int) (string
 
 // Decrypt decrypts encrypted data
 func Decrypt(encrypted string, key string) (string, error) {
-	return DecryptWithIterations(encrypted, key, defaultIterations)
+	return DecryptWithIterations(encrypted, key, GetDefaultIterations())
 }
 
 // DecryptWithIterations decrypts encrypted data with custom iterations
@@ -99,9 +104,38 @@ func DecryptWithIterations(encrypted string, key string, iterations int) (string
 	return string(plaintext), nil
 }
 
-// HashCardNumber creates a hash of card number for verification
+// HashCardNumber creates a salted hash of card number for verification
 func HashCardNumber(cardNumber string) string {
-	hash := sha256.Sum256([]byte(cardNumber))
-	return fmt.Sprintf("%x", hash)
+	// Generate a random salt for each card number
+	salt := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		// Fallback: use a deterministic salt if random generation fails
+		salt = []byte("fallback-salt-16b")
+	}
+
+	// Use PBKDF2 with SHA-256 for key derivation (similar to encryption)
+	hash := pbkdf2.Key([]byte(cardNumber), salt, 100000, 32, sha256.New)
+	
+	// Combine salt and hash for storage
+	result := make([]byte, 16+32)
+	copy(result[:16], salt)
+	copy(result[16:], hash)
+	
+	return base64.StdEncoding.EncodeToString(result)
+}
+
+// VerifyCardNumberHash verifies a card number against a stored hash
+func VerifyCardNumberHash(cardNumber, storedHash string) bool {
+	data, err := base64.StdEncoding.DecodeString(storedHash)
+	if err != nil || len(data) < 48 {
+		return false
+	}
+
+	salt := data[:16]
+	expectedHash := data[16:]
+
+	hash := pbkdf2.Key([]byte(cardNumber), salt, 100000, 32, sha256.New)
+	
+	return subtle.ConstantTimeCompare(hash, expectedHash) == 1
 }
 

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -75,6 +76,8 @@ func Load() (*Config, error) {
 		}
 	}
 
+	environment := getEnv("ENVIRONMENT", "development")
+
 	config := &Config{
 		Server: ServerConfig{
 			Port:         getEnv("SERVER_PORT", "8080"),
@@ -82,7 +85,7 @@ func Load() (*Config, error) {
 			ReadTimeout:  getDurationEnv("SERVER_READ_TIMEOUT", 15*time.Second),
 			WriteTimeout: getDurationEnv("SERVER_WRITE_TIMEOUT", 15*time.Second),
 			IdleTimeout:  getDurationEnv("SERVER_IDLE_TIMEOUT", 60*time.Second),
-			Environment:  getEnv("ENVIRONMENT", "development"),
+			Environment:  environment,
 		},
 		Database: DatabaseConfig{
 			Host:            getEnv("DB_HOST", "localhost"),
@@ -90,7 +93,7 @@ func Load() (*Config, error) {
 			User:            getEnv("DB_USER", "postgres"),
 			Password:        getEnv("DB_PASSWORD", "postgres"),
 			DBName:          getEnv("DB_NAME", "payment_gateway"),
-			SSLMode:         getEnv("DB_SSLMODE", "disable"),
+			SSLMode:         getEnv("DB_SSLMODE", "require"),
 			MaxOpenConns:    getIntEnv("DB_MAX_OPEN_CONNS", 25),
 			MaxIdleConns:    getIntEnv("DB_MAX_IDLE_CONNS", 5),
 			ConnMaxLifetime: getDurationEnv("DB_CONN_MAX_LIFETIME", 15*time.Minute),
@@ -102,36 +105,37 @@ func Load() (*Config, error) {
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       getIntEnv("REDIS_DB", 0),
 		},
-		JWT: JWTConfig{
-			SecretKey:     getEnv("JWT_SECRET_KEY", "change-this-secret-key-in-production"),
-			AccessExpiry:  getDurationEnv("JWT_ACCESS_EXPIRY", 15*time.Minute),
-			RefreshExpiry: getDurationEnv("JWT_REFRESH_EXPIRY", 7*24*time.Hour),
-		},
 		Security: SecurityConfig{
-			EncryptionKey:   getEnv("ENCRYPTION_KEY", "change-this-encryption-key-32-chars!"),
 			RateLimitRPS:    getIntEnv("RATE_LIMIT_RPS", 100),
 			RateLimitBurst:  getIntEnv("RATE_LIMIT_BURST", 200),
 			PBKDF2Iterations: getIntEnv("PBKDF2_ITERATIONS", 600000),
 		},
 		Payment: PaymentConfig{
 			DefaultCurrency:    getEnv("DEFAULT_CURRENCY", "USD"),
-			SupportedCurrencies: []string{"USD", "EUR", "GBP", "JPY", "CAD", "AUD"},
+			SupportedCurrencies: getEnvStringSlice("SUPPORTED_CURRENCIES", []string{"USD", "EUR", "GBP", "JPY", "CAD", "AUD"}),
 			MinAmount:          getFloatEnv("MIN_PAYMENT_AMOUNT", 0.01),
 			MaxAmount:          getFloatEnv("MAX_PAYMENT_AMOUNT", 100000.00),
 		},
 	}
 
-	if config.JWT.SecretKey == "change-this-secret-key-in-production" && config.Server.Environment == "production" {
-		return nil, fmt.Errorf("JWT_SECRET_KEY must be changed in production")
+	// Require JWT_SECRET_KEY - no default allowed
+	jwtSecret, err := getRequiredEnv("JWT_SECRET_KEY")
+	if err != nil {
+		return nil, fmt.Errorf("missing required environment variable: JWT_SECRET_KEY")
 	}
+	config.JWT.SecretKey = jwtSecret
+	config.JWT.AccessExpiry = getDurationEnv("JWT_ACCESS_EXPIRY", 15*time.Minute)
+	config.JWT.RefreshExpiry = getDurationEnv("JWT_REFRESH_EXPIRY", 7*24*time.Hour)
 
-	if config.Security.EncryptionKey == "change-this-encryption-key-32-chars!" && config.Server.Environment == "production" {
-		return nil, fmt.Errorf("ENCRYPTION_KEY must be changed in production")
+	// Require ENCRYPTION_KEY - no default allowed
+	encryptionKey, err := getRequiredEnv("ENCRYPTION_KEY")
+	if err != nil {
+		return nil, fmt.Errorf("missing required environment variable: ENCRYPTION_KEY")
 	}
-
-	if len(config.Security.EncryptionKey) < 32 {
+	if len(encryptionKey) < 32 {
 		return nil, fmt.Errorf("ENCRYPTION_KEY must be at least 32 characters")
 	}
+	config.Security.EncryptionKey = encryptionKey
 
 	return config, nil
 }
@@ -174,5 +178,30 @@ func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 		}
 	}
 	return defaultValue
+}
+
+func getRequiredEnv(key string) (string, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return "", fmt.Errorf("missing required environment variable: %s", key)
+	}
+	return value, nil
+}
+
+func getEnvStringSlice(key string, defaultValue []string) []string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	result := []string{}
+	for _, item := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) == 0 {
+		return defaultValue
+	}
+	return result
 }
 

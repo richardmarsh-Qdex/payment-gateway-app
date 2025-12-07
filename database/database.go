@@ -13,10 +13,8 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-var DB *gorm.DB
-
 // Init initializes the database connection with connection pooling
-func Init(cfg *config.Config) error {
+func Init(cfg *config.Config) (*gorm.DB, error) {
 	dsn := fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
 		cfg.Database.Host,
@@ -41,12 +39,12 @@ func Init(cfg *config.Config) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		return fmt.Errorf("failed to get database instance: %w", err)
+		return nil, fmt.Errorf("failed to get database instance: %w", err)
 	}
 
 	sqlDB.SetMaxOpenConns(cfg.Database.MaxOpenConns)
@@ -55,22 +53,24 @@ func Init(cfg *config.Config) error {
 	sqlDB.SetConnMaxIdleTime(cfg.Database.ConnMaxIdleTime)
 
 	if err := sqlDB.Ping(); err != nil {
-		return fmt.Errorf("failed to ping database: %w", err)
+		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	DB = db
-
-	if err := Migrate(); err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
+	if err := Migrate(db, cfg.Server.Environment); err != nil {
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
 	log.Println("Database connected successfully")
-	return nil
+	return db, nil
 }
 
-// Migrate runs database migrations
-func Migrate() error {
-	return DB.AutoMigrate(
+// Migrate runs database migrations (disabled in production)
+func Migrate(db *gorm.DB, environment string) error {
+	if environment == "production" {
+		log.Println("Auto-migration is disabled in production. Use a proper migration tool.")
+		return nil
+	}
+	return db.AutoMigrate(
 		&models.Merchant{},
 		&models.Payment{},
 		&models.PaymentCard{},
@@ -80,11 +80,11 @@ func Migrate() error {
 }
 
 // Close closes the database connection
-func Close() error {
-	if DB == nil {
+func Close(db *gorm.DB) error {
+	if db == nil {
 		return nil
 	}
-	sqlDB, err := DB.DB()
+	sqlDB, err := db.DB()
 	if err != nil {
 		return err
 	}
@@ -92,11 +92,11 @@ func Close() error {
 }
 
 // HealthCheck checks database health
-func HealthCheck() error {
-	if DB == nil {
+func HealthCheck(db *gorm.DB) error {
+	if db == nil {
 		return fmt.Errorf("database not initialized")
 	}
-	sqlDB, err := DB.DB()
+	sqlDB, err := db.DB()
 	if err != nil {
 		return err
 	}

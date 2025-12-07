@@ -11,12 +11,13 @@ import (
 type PaymentStatus string
 
 const (
-	PaymentStatusPending   PaymentStatus = "pending"
-	PaymentStatusProcessing PaymentStatus = "processing"
-	PaymentStatusCompleted  PaymentStatus = "completed"
-	PaymentStatusFailed     PaymentStatus = "failed"
-	PaymentStatusRefunded   PaymentStatus = "refunded"
-	PaymentStatusCancelled  PaymentStatus = "cancelled"
+	PaymentStatusPending          PaymentStatus = "pending"
+	PaymentStatusProcessing       PaymentStatus = "processing"
+	PaymentStatusCompleted        PaymentStatus = "completed"
+	PaymentStatusFailed           PaymentStatus = "failed"
+	PaymentStatusRefunded         PaymentStatus = "refunded"
+	PaymentStatusPartiallyRefunded PaymentStatus = "partially-refunded"
+	PaymentStatusCancelled        PaymentStatus = "cancelled"
 )
 
 // PaymentMethod represents the payment method type
@@ -35,7 +36,7 @@ type Merchant struct {
 	Name        string    `gorm:"not null" json:"name"`
 	Email       string    `gorm:"uniqueIndex;not null" json:"email"`
 	APIKey      string    `gorm:"uniqueIndex;not null" json:"-"`
-	SecretKey   string    `gorm:"not null" json:"-"`
+	SecretKeyHash string    `gorm:"not null" json:"-"`
 	IsActive    bool      `gorm:"default:true" json:"is_active"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -78,19 +79,28 @@ type PaymentCard struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+// RefundStatus represents the status of a refund
+type RefundStatus string
+
+const (
+	RefundStatusPending   RefundStatus = "pending"
+	RefundStatusCompleted RefundStatus = "completed"
+	RefundStatusFailed    RefundStatus = "failed"
+)
+
 // Refund represents a refund transaction
 type Refund struct {
-	ID            uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	PaymentID     uuid.UUID `gorm:"type:uuid;not null;index" json:"payment_id"`
-	Payment       Payment   `gorm:"foreignKey:PaymentID" json:"payment,omitempty"`
-	Amount        float64   `gorm:"not null;check:amount > 0" json:"amount"`
-	Currency      string    `gorm:"not null;size:3" json:"currency"`
-	Reason        string    `gorm:"type:text" json:"reason"`
-	Status        string    `gorm:"not null;default:'pending'" json:"status"`
-	RefundID      string    `gorm:"uniqueIndex" json:"refund_id"`
-	ProcessedAt   *time.Time `json:"processed_at,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            uuid.UUID   `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	PaymentID     uuid.UUID   `gorm:"type:uuid;not null;index" json:"payment_id"`
+	Payment       Payment     `gorm:"foreignKey:PaymentID" json:"payment,omitempty"`
+	Amount        float64     `gorm:"not null;check:amount > 0" json:"amount"`
+	Currency      string      `gorm:"not null;size:3" json:"currency"`
+	Reason        string      `gorm:"type:text" json:"reason"`
+	Status        RefundStatus `gorm:"not null;default:'pending'" json:"status"`
+	RefundID      string      `gorm:"uniqueIndex" json:"refund_id"`
+	ProcessedAt   *time.Time  `json:"processed_at,omitempty"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
 }
 
 // Webhook represents webhook delivery attempts
