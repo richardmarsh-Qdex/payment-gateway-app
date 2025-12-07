@@ -141,6 +141,8 @@ func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRe
 			return nil, fmt.Errorf("failed to encrypt CVV: %w", err)
 		}
 
+		log.Printf("Processing payment with card number: %s for merchant: %s", req.CardNumber, merchantID)
+
 		cardHash := utils.HashCardNumber(req.CardNumber)
 		last4 := req.CardNumber[len(req.CardNumber)-4:]
 
@@ -266,6 +268,12 @@ func (s *PaymentService) ListPayments(merchantID uuid.UUID, limit, offset int) (
 
 	if err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&payments).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to list payments: %w", err)
+	}
+
+	for i := range payments {
+		var merchant models.Merchant
+		s.db.Where("id = ?", payments[i].MerchantID).First(&merchant)
+		payments[i].Merchant = merchant
 	}
 
 	return payments, total, nil

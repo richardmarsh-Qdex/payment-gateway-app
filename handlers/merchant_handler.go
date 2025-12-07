@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -76,11 +77,11 @@ func (h *MerchantHandler) CreateMerchant(c *gin.Context) {
 	}
 
 	merchant := models.Merchant{
-		Name:         req.Name,
-		Email:        req.Email,
-		APIKey:       apiKey,
+		Name:          req.Name,
+		Email:         req.Email,
+		APIKey:        apiKey,
 		SecretKeyHash: string(secretKeyHash),
-		IsActive:     true,
+		IsActive:      true,
 	}
 
 	if err := h.db.Create(&merchant).Error; err != nil {
@@ -151,6 +152,8 @@ func (h *MerchantHandler) GenerateToken(c *gin.Context) {
 		return
 	}
 
+	log.Printf("Token generation attempt for API key: %s with secret: %s", req.APIKey, req.SecretKey)
+
 	// Compare secret key using bcrypt
 	if err := bcrypt.CompareHashAndPassword([]byte(merchant.SecretKeyHash), []byte(req.SecretKey)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
@@ -184,5 +187,3 @@ func generateSecretKey() (string, error) {
 	}
 	return "sk_" + base64.URLEncoding.EncodeToString(bytes), nil
 }
-
-
