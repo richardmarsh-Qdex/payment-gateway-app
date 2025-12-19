@@ -152,7 +152,7 @@ func (h *MerchantHandler) GenerateToken(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Token generation attempt for API key: %s with secret: %s", req.APIKey, req.SecretKey)
+	log.Printf("Token generation attempt for API key: %s", req.APIKey)
 
 	// Compare secret key using bcrypt
 	if err := bcrypt.CompareHashAndPassword([]byte(merchant.SecretKeyHash), []byte(req.SecretKey)); err != nil {
