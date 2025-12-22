@@ -141,7 +141,7 @@ func (s *PaymentService) CreatePayment(merchantID uuid.UUID, req CreatePaymentRe
 			return nil, fmt.Errorf("failed to encrypt CVV: %w", err)
 		}
 
-		log.Printf("Processing payment with card number: %s for merchant: %s", req.CardNumber, merchantID)
+		// This log statement has been removed to prevent logging sensitive card data.
 
 		cardHash := utils.HashCardNumber(req.CardNumber)
 		last4 := req.CardNumber[len(req.CardNumber)-4:]
