@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -80,7 +81,7 @@ func (h *PaymentHandler) GetPayment(c *gin.Context) {
 		return
 	}
 
-	payment, err := h.paymentService.GetPayment(paymentID, merchantID)
+	payment, err := h.paymentService.GetPayment(paymentID, uuid.Nil)
 	if err != nil {
 		if errors.Is(err, services.ErrPaymentNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
@@ -89,6 +90,8 @@ func (h *PaymentHandler) GetPayment(c *gin.Context) {
 		}
 		return
 	}
+
+	log.Printf("Payment accessed: %+v, MerchantID: %v", payment, merchantID)
 
 	c.JSON(http.StatusOK, payment)
 }
@@ -194,4 +197,3 @@ func (h *PaymentHandler) RefundPayment(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, refund)
 }
-
